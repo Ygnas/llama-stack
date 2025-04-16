@@ -1,0 +1,86 @@
+name: 'Setup Ollama'
+description: 'Sets up Ollama with model caching'
+inputs:
+  model:
+    description: 'Ollama model to pull and run (e.g. llama3.2:3b-instruct-fp16)'
+    required: true
+  keepalive:
+    description: 'Keepalive duration for the model'
+    required: false
+    default: '30m'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Ollama
+      shell: bash
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+        ollama --version
+  
+
+    - name: Set custom Ollama model path
+      shell: bash
+      run: |
+        mkdir -p ${{ env.OLLAMA_MODELS }}
+        sudo chown -R $USER:$USER ${{ env.OLLAMA_MODELS }}
+
+    - name: Configure Ollama systemd service
+      shell: bash
+      run: |
+        # Create systemd override directory
+        sudo mkdir -p /etc/systemd/system/ollama.service.d/
+
+        # Create override file with environment variable
+        # https://github.com/ollama/ollama/blob/main/docs/faq.md#setting-environment-variables-on-linux
+        echo '[Service]
+        Environment="OLLAMA_MODELS=${{ env.OLLAMA_MODELS }}"' | sudo tee /etc/systemd/system/ollama.service.d/override.conf
+
+        # Reload systemd config and Ollama service
+        sudo systemctl daemon-reload
+        sudo systemctl restart ollama
+
+    - name: Start Ollama server
+      shell: bash
+      run: |
+        OLLAMA_MODELS=${{ env.OLLAMA_MODELS }} ollama serve &
+        echo "Waiting for Ollama server to start..."
+        for i in {1..30}; do
+          if curl -s http://localhost:11434 | grep -q "Ollama is running"; then
+            echo "Ollama server is running!"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Ollama server failed to start"
+        exit 1
+
+    - name: Cache Ollama models
+      id: cache-ollama
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.OLLAMA_MODELS }}
+        key: ollama-models-${{ inputs.model }}-${{ hashFiles('.github/actions/setup-ollama/action.yml') }}
+        restore-keys: |
+          ollama-models-${{ inputs.model }}
+
+    - name: Pull Ollama model
+      if: ${{ steps.cache-ollama.outputs.cache-hit != 'true' }}
+      shell: bash
+      run: ollama pull ${{ inputs.model }}
+
+    - name: Run Ollama model
+      shell: bash
+      run: |
+        OLLAMA_MODELS=${{ env.OLLAMA_MODELS }} ollama run ${{ inputs.model }} --keepalive ${{ inputs.keepalive }} &
+        echo "Waiting for model to load..."
+        for i in {1..60}; do
+          if ollama ps | grep -q "${{ inputs.model }}"; then
+            echo "Model is loaded and running!"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Model failed to load"
+        ollama ps
+        exit 1
