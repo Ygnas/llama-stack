@@ -1,0 +1,48 @@
+name: "Start Llama Stack Server"
+description: "Composite action to activate venv, start, and wait for a Llama Stack server"
+inputs:
+  template:
+    description: "Path to the run.yaml for llama stack"
+    required: true
+  image-type:
+    description: "Image type for the server run (e.g., venv, container)"
+    required: true
+  server-port:
+    description: "Port for health check"
+    required: false
+    default: "8321"
+runs:
+  using: "composite"
+  steps:
+    - name: Cache Ollama Model
+      uses: actions/cache@v3
+      with:
+        path: ~/.ollama/models/${{ inputs.model }}
+        key: ollama-model-${{ inputs.model }}
+        restore-keys: |
+          ollama-model-
+
+    - name: Activate venv
+      shell: bash
+      run: |
+        source .venv/bin/activate
+
+    - name: Start Server
+      shell: bash
+      run: |
+        nohup uv run llama stack run ${{ inputs.template }} --image-type ${{ inputs.image-type }} > server.log 2>&1 &
+
+    - name: Wait for Server
+      shell: bash
+      run: |
+        echo "Waiting for Llama Stack server on port ${{ inputs.server-port }}..."
+        for i in {1..30}; do
+          if curl -s http://localhost:${{ inputs.server-port }}/v1/health | grep -q "OK"; then
+            echo "Server is up!"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Server failed to start"
+        cat server.log
+        exit 1

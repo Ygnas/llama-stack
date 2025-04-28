@@ -1,0 +1,129 @@
+name: "Setup Ollama"
+description: "Composite action to install, pull, start, and cache Ollama models"
+inputs:
+  model:
+    description: "Ollama model to pull and run (e.g., llama3.2:3b-instruct-fp16)"
+    required: true
+  cache-key:
+    description: "Cache key for the Ollama model"
+    required: false
+    default: "llama3.2:3b-instruct-fp16"
+runs:
+  using: "composite"
+  steps:
+
+    - name: Install Ollama
+      shell: bash
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+
+    - name: Set custom Ollama model path
+      shell: bash
+      run: |
+        mkdir -p ${{ inputs.model }}
+        sudo chown -R $USER:$USER ${{ inputs.model }}
+
+    - name: Configure Ollama systemd service
+      shell: bash
+      run: |
+        # Create systemd override directory
+        sudo mkdir -p /etc/systemd/system/ollama.service.d/
+        # Create override file with environment variable
+        # https://github.com/ollama/ollama/blob/main/docs/faq.md#setting-environment-variables-on-linux
+        echo '[Service]
+        Environment="OLLAMA_MODELS=${{ inputs.model }}"' | sudo tee /etc/systemd/system/ollama.service.d/override.conf
+        # Reload systemd config and Ollama service
+        sudo systemctl daemon-reload
+        sudo systemctl restart ollama
+
+  
+    - name: Wait for Ollama systemd service
+      shell: bash
+      run: |
+        echo "Waiting for ollama.service to become active…"
+        for i in {1..30}; do
+          if systemctl is-active --quiet ollama; then
+            echo "✔ ollama.service is active"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "✖ ollama.service failed to start"
+        sudo systemctl status ollama --no-pager
+        exit 1
+
+
+    - name: Set proper permissions for Ollama directories
+      shell: bash 
+      run: |
+        sudo mkdir -p ${{ env.OLLAMA_MODELS }}
+        sudo chown -R ollama:ollama ${{ env.OLLAMA_MODELS }}
+        sudo chmod -R 755 ${{ env.OLLAMA_MODELS }}
+
+    - name: Cache Ollama Modelßß
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.OLLAMA_MODELS }}
+        key: ollama-model-${{ inputs.model }}
+
+    - name: Pull Ollama Model
+      if: steps.cache-ollama.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        ollama pull ${{ inputs.model }}
+
+    - name: Start Ollama Server
+      shell: bash
+      run: |
+        nohup ollama run ${{ inputs.model }} --keepalive=30m > ollama.log 2>&1 &
+
+    - name: Wait for Ollama to be Ready
+      shell: bash
+      run: |
+        echo "Waiting for Ollama on port 11434..."
+        for i in {1..30}; do
+          if curl -s http://localhost:11434 | grep -q "Ollama is running"; then
+            echo "Ollama is running!"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Ollama failed to start"
+        ollama ps
+        cat ollama.log
+        exit 1
+
+    # - name: Find Ollama model files
+    #   shell: bash
+    #   run: |
+    #     echo "Looking for large files that could be Ollama models..."
+        
+    #     # Look for files larger than 3GB across common locations
+    #     echo "Searching in common directories:"
+        
+    #     # Search system-wide
+    #     sudo find / -type f -size +3G -not -path "*/proc/*" -not -path "*/sys/*" -not -path "*/dev/*" 2>/dev/null | while read file; do
+    #       echo "Found large file: $file ($(du -h "$file" | cut -f1))"
+    #       echo "POTENTIAL_MODEL_FILE=$file" >> $GITHUB_ENV
+          
+    #       # Get the directory containing this file
+    #       dir=$(dirname "$file")
+    #       if [[ "$file" == *"ollama"* ]] || [[ "$dir" == *"ollama"* ]] || [[ "$file" == *"model"* ]]; then
+    #         echo "This looks like an Ollama model directory: $dir"
+    #         echo "OLLAMA_MODEL_DIR=$dir" >> $GITHUB_ENV
+            
+    #         # List all files in that directory to see model structure
+    #         echo "Contents of directory:"
+    #         ls -la "$dir"
+    #       fi
+    #     done
+        
+    #     # Search specifically in common Ollama locations
+    #     for dir in "/usr/share/ollama/.ollama" "/root/.ollama" "/home/runner/.ollama" "/opt/ollama" "/var/lib/ollama"; do
+    #       if [ -d "$dir" ]; then
+    #         echo "Found Ollama directory: $dir"
+    #         sudo find "$dir" -type f -size +100M | while read file; do
+    #           echo "Found potential model file: $file ($(du -h "$file" | cut -f1))"
+    #         done
+    #       fi
+    #     done
