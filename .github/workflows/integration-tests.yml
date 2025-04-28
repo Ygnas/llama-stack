@@ -18,7 +18,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  cache-model:
+      runs-on: ubuntu-latest
+      env:
+        OLLAMA_MODELS: llama3.2:3b-instruct-fp16
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Setup Ollama (user, service, etc.)
+          uses: ./.github/actions/ollama-setup
+          with:
+            model: llama3.2:3b-instruct-fp16
+
   test-matrix:
+    needs: cache-model
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -37,15 +51,11 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install and start Ollama
-        run: |
-          # the ollama installer also starts the ollama service
-          curl -fsSL https://ollama.com/install.sh | sh
-
-      - name: Pull Ollama image
-        run: |
-          # TODO: cache the model. OLLAMA_MODELS defaults to ~ollama/.ollama/models.
-          ollama pull llama3.2:3b-instruct-fp16
+      - name: Restore Ollama model cache
+        uses: actions/cache@v3
+        with:
+          path: /home/ollama/.ollama/models
+          key: ollama-model-llama3.2:3b-instruct-fp16
 
       - name: Set Up Environment and Install Dependencies
         run: |
@@ -85,7 +95,7 @@ jobs:
         if: matrix.client-type == 'http'
         run: |
           echo "Verifying Ollama status..."
-          ollama_status=$(curl -s -L http://127.0.0.1:8321/v1/providers/ollama|jq --raw-output .health.status)
+          ollama_status=$(curl -s -L http://127.0.0.1:8321/v1/providers/ollama | jq --raw-output .health.status)
           echo "Ollama status: $ollama_status"
           if [ "$ollama_status" != "OK" ]; then
             echo "Ollama health check failed"
