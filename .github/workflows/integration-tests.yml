@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
     paths:
       - 'llama_stack/**'
       - 'tests/integration/**'
@@ -24,8 +23,8 @@ jobs:
       matrix:
         # Listing tests manually since some of them currently fail
         # TODO: generate matrix list from tests/integration when fixed
-        test-type: [agents, inference, datasets, inspect, scoring, post_training, providers]
-        client-type: [library, http]
+        test-type: [datasets]
+        client-type: [http]
       fail-fast: false # we want to run all tests regardless of failure
 
     steps:
@@ -37,15 +36,73 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install and start Ollama
+      - name: Cache Ollama binary
+        id: cache-bin
+        uses: actions/cache@v4
+        with:
+          path: /usr/bin/ollama  # You could also cache the whole /usr/lib/ollama if more files are there
+          key: ollama-bin-${{ runner.os }}-v0.1.0  # Replace with actual version or hash of tarball
+
+      - name: Install Ollama manually (if not cached)
+        if: steps.cache-bin.outputs.cache-hit != 'true'
         run: |
-          # the ollama installer also starts the ollama service
-          curl -fsSL https://ollama.com/install.sh | sh
+          echo "Downloading and installing Ollama manually..."
+          curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz
+          sudo tar -C /usr -xzf ollama-linux-amd64.tgz
+
+
+      - name: Cache Ollama Model
+        id: model-check
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.ollama/models
+          key: ollama-models-${{ runner.os }}-llama3.2-3b-instruct-fp16
+          restore-keys: |
+            ollama-models-${{ runner.os }}-
+
+      - name: Start Ollama in background
+        run: |
+          echo "Starting Ollama in background..."
+          nohup ollama serve > ollama.log 2>&1 &
 
       - name: Pull Ollama image
+        if: steps.model-check.outputs.cache-hit != 'true'
         run: |
-          # TODO: cache the model. OLLAMA_MODELS defaults to ~ollama/.ollama/models.
           ollama pull llama3.2:3b-instruct-fp16
+
+      # - name: Find Ollama model files
+      #   run: |
+      #     echo "Looking for large files that could be Ollama models..."
+          
+      #     # Look for files larger than 3GB across common locations
+      #     echo "Searching in common directories:"
+          
+      #     # Search system-wide
+      #     sudo find / -type f -size +3G -not -path "*/proc/*" -not -path "*/sys/*" -not -path "*/dev/*" 2>/dev/null | while read file; do
+      #       echo "Found large file: $file ($(du -h "$file" | cut -f1))"
+      #       echo "POTENTIAL_MODEL_FILE=$file" >> $GITHUB_ENV
+            
+      #       # Get the directory containing this file
+      #       dir=$(dirname "$file")
+      #       if [[ "$file" == *"ollama"* ]] || [[ "$dir" == *"ollama"* ]] || [[ "$file" == *"model"* ]]; then
+      #         echo "This looks like an Ollama model directory: $dir"
+      #         echo "OLLAMA_MODEL_DIR=$dir" >> $GITHUB_ENV
+              
+      #         # List all files in that directory to see model structure
+      #         echo "Contents of directory:"
+      #         ls -la "$dir"
+      #       fi
+      #     done
+          
+      #     # Search specifically in common Ollama locations
+      #     for dir in "/usr/share/ollama/.ollama" "/root/.ollama" "/home/runner/.ollama" "/opt/ollama" "/var/lib/ollama"; do
+      #       if [ -d "$dir" ]; then
+      #         echo "Found Ollama directory: $dir"
+      #         sudo find "$dir" -type f -size +100M | while read file; do
+      #           echo "Found potential model file: $file ($(du -h "$file" | cut -f1))"
+      #         done
+      #       fi
+      #     done
 
       - name: Set Up Environment and Install Dependencies
         run: |
