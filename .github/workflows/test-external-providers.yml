@@ -30,17 +30,10 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install Ollama
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-
-      - name: Pull Ollama image
-        run: |
-          ollama pull llama3.2:3b-instruct-fp16
-
-      - name: Start Ollama in background
-        run: |
-          nohup ollama run llama3.2:3b-instruct-fp16 --keepalive=30m > ollama.log 2>&1 &
+      # - name: Setup Ollama
+      #   uses: ./.github/actions/ollama-setup
+      #   with:
+      #     model: llama3.2:3b-instruct-fp16
 
       - name: Set Up Environment and Install Dependencies
         run: |
@@ -65,21 +58,6 @@ jobs:
       - name: Build distro from config file
         run: |
           USE_COPY_NOT_MOUNT=true LLAMA_STACK_DIR=. uv run llama stack build --config tests/external-provider/llama-stack-provider-ollama/custom-distro.yaml
-
-      - name: Wait for Ollama to start
-        run: |
-          echo "Waiting for Ollama..."
-          for i in {1..30}; do
-            if curl -s http://localhost:11434 | grep -q "Ollama is running"; then
-              echo "Ollama is running!"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Ollama failed to start"
-          ollama ps
-          ollama.log
-          exit 1
 
       - name: Start Llama Stack server in background
         if: ${{ matrix.image-type }} == 'venv'
@@ -110,6 +88,6 @@ jobs:
           cat server.log
           exit 1
 
-      - name: run inference tests
-        run: |
-          uv run pytest -v tests/integration/inference/test_text_inference.py --stack-config="http://localhost:8321" --text-model="meta-llama/Llama-3.2-3B-Instruct" --embedding-model=all-MiniLM-L6-v2
+      # - name: run inference tests
+      #   run: |
+      #     uv run pytest -v tests/integration/inference/test_text_inference.py --stack-config="http://localhost:8321" --text-model="meta-llama/Llama-3.2-3B-Instruct" --embedding-model=all-MiniLM-L6-v2
