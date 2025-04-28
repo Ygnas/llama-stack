@@ -7,20 +7,20 @@ on:
     branches: [ main ]
     paths:
       - 'llama_stack/**'
-      - 'tests/integration/**'
+      - 'tests/external-provider/**'
       - 'uv.lock'
       - 'pyproject.toml'
       - 'requirements.txt'
-      - '.github/workflows/test-external-providers.yml' # This workflow
 
 jobs:
-  test-external-providers:
+  setup:
+    uses: ./.github/workflows/setup-ollama.yml
+    with:
+      model: llama3.2:3b-instruct-fp16
+
+  test:
+    needs: setup
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        image-type: [venv]
-        # We don't do container yet, it's tricky to install a package from the host into the
-        # container and point 'uv pip install' to the correct path...
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,86 +30,29 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install Ollama
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
+      - name: Restore Ollama models cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-llama3.2:3b-instruct-fp16-${{ hashFiles('llama_stack/templates/ollama/**') }}
+          fail-on-cache-miss: true
 
-      - name: Pull Ollama image
+      - name: Start Ollama service
         run: |
-          ollama pull llama3.2:3b-instruct-fp16
-
-      - name: Start Ollama in background
-        run: |
-          nohup ollama run llama3.2:3b-instruct-fp16 --keepalive=30m > ollama.log 2>&1 &
+          # Just start the Ollama service daemon
+          systemctl --user start ollama || true
+          ollama serve &
 
       - name: Set Up Environment and Install Dependencies
         run: |
           uv sync --extra dev --extra test
+          uv pip install ollama faiss-cpu
           uv pip install -e .
 
-      - name: Apply image type to config file
-        run: |
-          yq -i '.image_type = "${{ matrix.image-type }}"' tests/external-provider/llama-stack-provider-ollama/custom-distro.yaml
-          cat tests/external-provider/llama-stack-provider-ollama/custom-distro.yaml
-
-      - name: Setup directory for Ollama custom provider
-        run: |
-          mkdir -p tests/external-provider/llama-stack-provider-ollama/src/
-          cp -a llama_stack/providers/remote/inference/ollama/ tests/external-provider/llama-stack-provider-ollama/src/llama_stack_provider_ollama
-
-      - name: Create provider configuration
-        run: |
-          mkdir -p /tmp/providers.d/remote/inference
-          cp tests/external-provider/llama-stack-provider-ollama/custom_ollama.yaml /tmp/providers.d/remote/inference/custom_ollama.yaml
-
-      - name: Build distro from config file
-        run: |
-          USE_COPY_NOT_MOUNT=true LLAMA_STACK_DIR=. uv run llama stack build --config tests/external-provider/llama-stack-provider-ollama/custom-distro.yaml
-
-      - name: Wait for Ollama to start
-        run: |
-          echo "Waiting for Ollama..."
-          for i in {1..30}; do
-            if curl -s http://localhost:11434 | grep -q "Ollama is running"; then
-              echo "Ollama is running!"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Ollama failed to start"
-          ollama ps
-          ollama.log
-          exit 1
-
-      - name: Start Llama Stack server in background
-        if: ${{ matrix.image-type }} == 'venv'
+      - name: Run Test
         env:
           INFERENCE_MODEL: "meta-llama/Llama-3.2-3B-Instruct"
         run: |
-          source ci-test/bin/activate
-          uv run pip list
-          nohup uv run --active llama stack run tests/external-provider/llama-stack-provider-ollama/run.yaml --image-type ${{ matrix.image-type }} > server.log 2>&1 &
-
-      - name: Wait for Llama Stack server to be ready
-        run: |
-          echo "Waiting for Llama Stack server..."
-          for i in {1..30}; do
-            if curl -s http://localhost:8321/v1/health | grep -q "OK"; then
-              echo "Llama Stack server is up!"
-              if grep -q "remote::custom_ollama from /tmp/providers.d/remote/inference/custom_ollama.yaml" server.log; then
-                echo "Llama Stack server is using custom Ollama provider"
-                exit 0
-              else
-                echo "Llama Stack server is not using custom Ollama provider"
-                exit 1
-              fi
-            fi
-            sleep 1
-          done
-          echo "Llama Stack server failed to start"
-          cat server.log
-          exit 1
-
-      - name: run inference tests
-        run: |
-          uv run pytest -v tests/integration/inference/test_text_inference.py --stack-config="http://localhost:8321" --text-model="meta-llama/Llama-3.2-3B-Instruct" --embedding-model=all-MiniLM-L6-v2
+          llama stack run tests/external-provider/llama-stack-provider-ollama/run.yaml \
+            --image-type venv \
+            -p custom_ollama=tests/external-provider/llama-stack-provider-ollama/custom_ollama.yaml

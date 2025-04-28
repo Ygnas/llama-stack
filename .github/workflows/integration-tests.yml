@@ -18,7 +18,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  setup:
+    uses: ./.github/workflows/setup-ollama.yml
+    with:
+      model: llama3.2:3b-instruct-fp16
+
   test-matrix:
+    needs: setup
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -37,16 +43,18 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install and start Ollama
-        run: |
-          # the ollama installer also starts the ollama service
-          curl -fsSL https://ollama.com/install.sh | sh
+      - name: Restore Ollama models cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-llama3.2:3b-instruct-fp16-${{ hashFiles('llama_stack/templates/ollama/**') }}
 
-      - name: Pull Ollama image
+      - name: Start Ollama service
         run: |
-          # TODO: cache the model. OLLAMA_MODELS defaults to ~ollama/.ollama/models.
-          ollama pull llama3.2:3b-instruct-fp16
-
+          # Just start the Ollama service daemon
+          systemctl --user start ollama || true
+          ollama serve &
+          
       - name: Set Up Environment and Install Dependencies
         run: |
           uv sync --extra dev --extra test

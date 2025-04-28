@@ -1,0 +1,31 @@
+name: Setup Ollama
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        required: false
+        type: string
+        default: 'llama3.2:3b-instruct-fp16'
+
+jobs:
+  setup-ollama:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cache Ollama models
+        id: cache-ollama
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-${{ inputs.model }}-${{ hashFiles('llama_stack/templates/ollama/**') }}
+
+      - name: Install Ollama
+        run: |
+          # Install Ollama without starting the service
+          curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Pull Ollama model
+        if: steps.cache-ollama.outputs.cache-hit != 'true'
+        run: |
+          # Start Ollama temporarily to pull the model
+          ollama pull ${{ inputs.model }}
