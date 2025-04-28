@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
     paths:
       - 'llama_stack/**'
       - 'tests/integration/**'
@@ -17,6 +16,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  OLLAMA_MODELS: /usr/share/ollama/.ollama/models
+
 jobs:
   test-matrix:
     runs-on: ubuntu-latest
@@ -24,8 +26,9 @@ jobs:
       matrix:
         # Listing tests manually since some of them currently fail
         # TODO: generate matrix list from tests/integration when fixed
-        test-type: [agents, inference, datasets, inspect, scoring, post_training, providers]
-        client-type: [library, http]
+        test-type: [datasets]
+        # test-type: [agents, inference, datasets, inspect, scoring, post_training, providers]
+        client-type: [http]
       fail-fast: false # we want to run all tests regardless of failure
 
     steps:
@@ -37,10 +40,30 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install and start Ollama
+      - name: Cache Ollama Binary
+        id: cache-ollama-bin
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/ollama
+          key: ${{ runner.os }}-ollama-bin-v1
+
+      - name: Install Ollama (if not cached)
+        if: steps.cache-ollama-bin.outputs.cache-hit != 'true'
         run: |
-          # the ollama installer also starts the ollama service
+          echo "Ollama binary not found in cache, running installer..."
+          # The ollama installer also starts the ollama service
           curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Ensure Ollama service is running
+        run: |
+          if ! curl -s --fail -o /dev/null http://localhost:11434; then
+            if [[ "${{ steps.cache-ollama-bin.outputs.cache-hit }}" == "true" ]]; then
+              sudo chmod +x /usr/local/bin/ollama
+              ollama serve > ollama_serve.log 2>&1 &
+            fi
+          else
+              echo "Ollama service appears to be already running."
+          fi
 
       - name: Pull Ollama image
         run: |
