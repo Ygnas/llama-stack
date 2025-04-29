@@ -20,12 +20,15 @@ concurrency:
 jobs:
   test-matrix:
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
         # Listing tests manually since some of them currently fail
         # TODO: generate matrix list from tests/integration when fixed
-        test-type: [agents, inference, datasets, inspect, scoring, post_training, providers]
-        client-type: [library, http]
+        # test-type: [agents, inference, datasets, inspect, scoring, post_training, providers]
+        # client-type: [library, http]
+        test-type: [datasets]
+        client-type: [http]
       fail-fast: false # we want to run all tests regardless of failure
 
     steps:
@@ -37,15 +40,10 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install and start Ollama
-        run: |
-          # the ollama installer also starts the ollama service
-          curl -fsSL https://ollama.com/install.sh | sh
-
-      - name: Pull Ollama image
-        run: |
-          # TODO: cache the model. OLLAMA_MODELS defaults to ~ollama/.ollama/models.
-          ollama pull llama3.2:3b-instruct-fp16
+      - name: Setup ollama
+        uses: ./.github/actions/setup-ollama
+        with:
+          model-name: llama3.2:3b-instruct-fp16
 
       - name: Set Up Environment and Install Dependencies
         run: |

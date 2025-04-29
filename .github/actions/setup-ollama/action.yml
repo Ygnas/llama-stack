@@ -1,0 +1,38 @@
+name: Setup Ollama
+description: Start Ollama and cache model
+inputs:
+  model-name:
+    description: Name of the model to pull
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Restore Ollama model cache
+      uses: actions/cache@v4
+      with:
+        path: /usr/share/ollama/.ollama/models
+        key: ollama-models-${{ runner.os }}-${{ inputs.model-name }}
+        restore-keys: |
+          ollama-models-${{ runner.os }}-
+
+    - name: Install and start Ollama
+      shell: bash
+      run: |
+        # the ollama installer also starts the ollama service
+        curl -fsSL https://ollama.com/install.sh | sh
+
+    - name: Fix permissions for model cache
+      shell: bash
+      run: |
+        sudo chown -R ollama:ollama /usr/share/ollama/.ollama
+
+    - name: Start Ollama service manually
+      shell: bash
+      run: |
+        sudo systemctl start ollama
+
+    - name: Pull Ollama image
+      shell: bash
+      run: |
+        # TODO: cache the model. OLLAMA_MODELS defaults to ~ollama/.ollama/models.
+        ollama pull ${{ inputs.model-name }}
